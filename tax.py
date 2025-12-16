@@ -4,7 +4,7 @@ import json
 
 # --- CONFIGURATION ---
 # REPLACE THIS with your actual n8n Production Webhook URL
-N8N_WEBHOOK_URL = "https://aymanbhaldar.app.n8n.cloud/webhook-test/tax-intake-demo"
+N8N_WEBHOOK_URL = "https://aymanbhaldar.app.n8n.cloud/webhook/tax-intake-demo"
 
 # --- UI CONFIGURATION ---
 st.set_page_config(
