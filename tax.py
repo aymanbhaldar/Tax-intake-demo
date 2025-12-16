@@ -4,7 +4,7 @@ import json
 
 # --- CONFIGURATION ---
 # REPLACE THIS with your actual n8n Production Webhook URL
-N8N_WEBHOOK_URL = "https://aymanbhaldar.app.n8n.cloud/webhook-test/tax-intake-demo"
+N8N_WEBHOOK_URL = "https://your-n8n-instance.com/webhook/your-uuid"
 
 # --- UI CONFIGURATION ---
 st.set_page_config(
@@ -55,21 +55,32 @@ if uploaded_files:
                 progress_bar.progress(100)
                 status_text.success("✅ Analysis Complete!")
                 
-                # Handle List vs Wrapper Object response
-                if isinstance(data, list):
+                # --- CRITICAL FIX: UNWRAP THE NESTED DATA ---
+                results = []
+                
+                # Scenario 1: n8n returns [ { "data": [ ...items... ] } ] (YOUR CASE)
+                # This handles the specific structure shown in your screenshot
+                if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "data" in data[0] and isinstance(data[0]["data"], list):
+                    results = data[0]["data"]
+                    
+                # Scenario 2: n8n returns { "data": [ ...items... ] } (Standard Object)
+                elif isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+                    results = data["data"]
+
+                # Scenario 3: n8n returns just the list [ item1, item2 ]
+                elif isinstance(data, list):
                     results = data
-                else:
-                    results = data.get("results", []) or data.get("data", [])
                 
                 if not results:
-                    st.warning("No results returned.")
+                    st.warning("No results found. The API response format might be unexpected.")
+                    st.write("Raw Response:", data) # Debugging helper
 
                 # 4. Loop through results
                 for res in results:
-                    # Handle if item is wrapped in 'json'
+                    # Handle if item is wrapped in 'json' (standard n8n node output)
                     item = res.get("json", res) if "json" in res else res
                     
-                    # --- CRITICAL FIX: Match the exact keys from your Screenshot ---
+                    # Match keys exactly
                     file_name = item.get("File Name") or item.get("file_name") or "Unknown Doc"
                     status = item.get("Status") or item.get("status") or "processed"
                     doc_type = item.get("Doc Type") or item.get("document_type") or "N/A"
@@ -94,12 +105,15 @@ if uploaded_files:
                         
                     flags = item.get("Risk Flags", [])
                     summary = item.get("Reviewer Summary", "No summary provided.")
+                    
+                    # Confidence check
+                    confidence = item.get("Confidence", 0)
 
                     # --- RENDER UI ---
                     # Color code the expander based on status
                     icon = "⚠️" if "needs_review" in str(status) else "✅"
                     
-                    with st.expander(f"{icon} {file_name}", expanded=True):
+                    with st.expander(f"{icon} {file_name} (Conf: {confidence}%)", expanded=True):
                         col1, col2 = st.columns(2)
                         
                         # Left Column: Raw Data
@@ -114,7 +128,7 @@ if uploaded_files:
                         with col2:
                             st.subheader("Compliance Audit")
                             
-                            # Color code the metric
+                            # Color code the metric for high/low rates
                             rate_color = "normal"
                             if rate > 35 or (rate < 5 and rate > 0):
                                 rate_color = "inverse"
@@ -122,7 +136,7 @@ if uploaded_files:
                             st.metric("Effective Tax Rate", f"{rate:.2f}%")
                             
                             if flags:
-                                st.error(f"Risks: {len(flags)} Issue(s) Found")
+                                st.error(f"Risks: {len(flags)} Issue(s)")
                                 # Handle if flags is a list or a joined string
                                 if isinstance(flags, list):
                                     for flag in flags:
