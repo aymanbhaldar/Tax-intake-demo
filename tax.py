@@ -70,44 +70,64 @@ if uploaded_files:
                     st.warning("No results returned. Check if the files were valid.")
                 
                 for res in results:
-                    # Use 'json' key if n8n wraps items in { "json": ... } structure
-                    # Otherwise use 'res' directly
+                    # Handle if the item is wrapped in a 'json' property or comes direct
                     item_data = res.get("json", res) if "json" in res else res
                     
-                    file_name = item_data.get("file_name", "Unknown Document")
+                    # --- FIX: ADAPT TO YOUR ACTUAL API OUTPUT KEYS ---
+                    # We check for BOTH the "Code Key" and the "Sheet Key"
+                    file_name = item_data.get("File Name") or item_data.get("file_name") or "Unknown Doc"
+                    status = item_data.get("Status") or item_data.get("status") or "processed"
+                    doc_type = item_data.get("Doc Type") or item_data.get("document_type") or "N/A"
                     
-                    with st.expander(f"📄 {file_name}", expanded=True):
-                        # Get main data blocks
-                        fields = item_data.get("extracted_fields", {})
-                        analysis = fields.get("tax_analysis", {})
-                        
-                        # Layout: 2 Columns
+                    # Extract Data (Handling flat structure from your screenshot)
+                    employee = item_data.get("Employee Name") or \
+                               item_data.get("extracted_fields", {}).get("employee_name") or "N/A"
+                               
+                    employer = item_data.get("Employer Name") or \
+                               item_data.get("extracted_fields", {}).get("employer_name") or "N/A"
+                    
+                    wages = item_data.get("Wages (Box 1)") or \
+                            item_data.get("extracted_fields", {}).get("wages_box_1") or 0
+                            
+                    # Audit Data
+                    rate = item_data.get("Eff. Rate (%)") or \
+                           item_data.get("extracted_fields", {}).get("tax_analysis", {}).get("effective_tax_rate_percent") or 0
+                           
+                    flags = item_data.get("Risk Flags") or \
+                            item_data.get("extracted_fields", {}).get("tax_analysis", {}).get("risk_flags") or []
+                    
+                    summary = item_data.get("Reviewer Summary") or \
+                              item_data.get("extracted_fields", {}).get("tax_analysis", {}).get("reviewer_summary") or "No summary."
+
+                    # --- RENDER UI ---
+                    with st.expander(f"📄 {file_name} ({status})", expanded=True):
                         col1, col2 = st.columns(2)
                         
                         # Left Column: Raw Data
                         with col1:
                             st.subheader("Extraction")
-                            st.caption(f"Doc Type: {item_data.get('document_type', 'N/A')}")
-                            st.text(f"Employee: {fields.get('employee_name', 'N/A')}")
-                            st.text(f"Employer: {fields.get('employer_name', 'N/A')}")
-                            st.metric("Wages (Box 1)", f"${fields.get('wages_box_1', 0):,}")
+                            st.caption(f"Doc Type: {doc_type}")
+                            st.text(f"Employee: {employee}")
+                            st.text(f"Employer: {employer}")
+                            st.metric("Wages (Box 1)", f"${float(wages):,.2f}" if wages else "$0.00")
                         
                         # Right Column: Risk Analysis
                         with col2:
                             st.subheader("Compliance Audit")
-                            rate = analysis.get('effective_tax_rate_percent', 0)
-                            st.metric("Effective Tax Rate", f"{rate}%")
+                            st.metric("Effective Tax Rate", f"{float(rate):.2f}%")
                             
-                            flags = analysis.get("risk_flags", [])
                             if flags:
                                 st.error(f"🚩 Risks Detected: {len(flags)}")
-                                for flag in flags:
-                                    st.write(f"- {flag}")
+                                # Handle if flags came back as a string (from Sheets) or list
+                                if isinstance(flags, str):
+                                    st.write(flags)
+                                else:
+                                    for flag in flags:
+                                        st.write(f"- {flag}")
                             else:
                                 st.success("✅ No Risks Detected")
                                 
-                        # Full Summary
-                        st.info(f"**Analyst Note:** {analysis.get('reviewer_summary', 'No summary provided.')}")
+                        st.info(f"**Analyst Note:** {summary}")
 
             else:
                 st.error(f"Server Error ({response.status_code}):")
