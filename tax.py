@@ -3,9 +3,8 @@ import requests
 import json
 
 # --- CONFIGURATION ---
-# REPLACE THIS URL with your actual n8n Production Webhook URL
-# Ensure your n8n Webhook node is set to 'POST'
-N8N_WEBHOOK_URL = "https://aymanbhaldar.app.n8n.cloud/webhook-test/tax-intake-demo"
+# REPLACE THIS with your actual n8n Production Webhook URL
+N8N_WEBHOOK_URL = "https://your-n8n-instance.com/webhook/your-uuid"
 
 # --- UI CONFIGURATION ---
 st.set_page_config(
@@ -17,7 +16,7 @@ st.set_page_config(
 # --- HEADER SECTION ---
 st.title("📄 AI Tax Document Extractor")
 st.markdown("""
-Upload **W-2** or **1099** forms (PDF/Images). 
+Upload **W-2** or **1099** forms. 
 The AI will extract data and perform an **automatic compliance audit**.
 """)
 
@@ -39,12 +38,11 @@ if uploaded_files:
         # 2. Prepare Files for API
         files_payload = []
         for f in uploaded_files:
-            f.seek(0) # Reset pointer
-            # Tuple format: ('form_field_name', (filename, file_bytes, content_type))
-            # Note: We use 'data' because your n8n "Split Batch" node expects it
+            f.seek(0)
+            # Tuple format: ('data', (filename, file_bytes, content_type))
             files_payload.append(('data', (f.name, f.read(), f.type)))
         
-        status_text.text("📤 Uploading and analyzing with AI...")
+        status_text.text("📤 Uploading and analyzing...")
         progress_bar.progress(20)
 
         try:
@@ -57,50 +55,51 @@ if uploaded_files:
                 progress_bar.progress(100)
                 status_text.success("✅ Analysis Complete!")
                 
-                # --- VITAL FIX: Handle List vs Object Response ---
-                # Your n8n workflow returns a direct List [item1, item2]
+                # Handle List vs Wrapper Object response
                 if isinstance(data, list):
                     results = data
                 else:
-                    # Fallback if n8n returns { "results": [...] }
-                    results = data.get("results", [])
+                    results = data.get("results", []) or data.get("data", [])
                 
-                # --- 4. Render Results ---
                 if not results:
-                    st.warning("No results returned. Check if the files were valid.")
-                
+                    st.warning("No results returned.")
+
+                # 4. Loop through results
                 for res in results:
-                    # Handle if the item is wrapped in a 'json' property or comes direct
-                    item_data = res.get("json", res) if "json" in res else res
+                    # Handle if item is wrapped in 'json'
+                    item = res.get("json", res) if "json" in res else res
                     
-                    # --- FIX: ADAPT TO YOUR ACTUAL API OUTPUT KEYS ---
-                    # We check for BOTH the "Code Key" and the "Sheet Key"
-                    file_name = item_data.get("File Name") or item_data.get("file_name") or "Unknown Doc"
-                    status = item_data.get("Status") or item_data.get("status") or "processed"
-                    doc_type = item_data.get("Doc Type") or item_data.get("document_type") or "N/A"
+                    # --- CRITICAL FIX: Match the exact keys from your Screenshot ---
+                    file_name = item.get("File Name") or item.get("file_name") or "Unknown Doc"
+                    status = item.get("Status") or item.get("status") or "processed"
+                    doc_type = item.get("Doc Type") or item.get("document_type") or "N/A"
                     
-                    # Extract Data (Handling flat structure from your screenshot)
-                    employee = item_data.get("Employee Name") or \
-                               item_data.get("extracted_fields", {}).get("employee_name") or "N/A"
-                               
-                    employer = item_data.get("Employer Name") or \
-                               item_data.get("extracted_fields", {}).get("employer_name") or "N/A"
+                    # Extraction Data
+                    employee = item.get("Employee Name", "N/A")
+                    employer = item.get("Employer Name", "N/A")
                     
-                    wages = item_data.get("Wages (Box 1)") or \
-                            item_data.get("extracted_fields", {}).get("wages_box_1") or 0
-                            
+                    # Numeric Data (Handle potential $ symbols or strings)
+                    raw_wages = item.get("Wages (Box 1)", 0)
+                    try:
+                        wages = float(str(raw_wages).replace(',', '').replace('$', '')) if raw_wages else 0.0
+                    except:
+                        wages = 0.0
+
                     # Audit Data
-                    rate = item_data.get("Eff. Rate (%)") or \
-                           item_data.get("extracted_fields", {}).get("tax_analysis", {}).get("effective_tax_rate_percent") or 0
-                           
-                    flags = item_data.get("Risk Flags") or \
-                            item_data.get("extracted_fields", {}).get("tax_analysis", {}).get("risk_flags") or []
-                    
-                    summary = item_data.get("Reviewer Summary") or \
-                              item_data.get("extracted_fields", {}).get("tax_analysis", {}).get("reviewer_summary") or "No summary."
+                    raw_rate = item.get("Eff. Rate (%)", 0)
+                    try:
+                        rate = float(raw_rate)
+                    except:
+                        rate = 0.0
+                        
+                    flags = item.get("Risk Flags", [])
+                    summary = item.get("Reviewer Summary", "No summary provided.")
 
                     # --- RENDER UI ---
-                    with st.expander(f"📄 {file_name} ({status})", expanded=True):
+                    # Color code the expander based on status
+                    icon = "⚠️" if "needs_review" in str(status) else "✅"
+                    
+                    with st.expander(f"{icon} {file_name}", expanded=True):
                         col1, col2 = st.columns(2)
                         
                         # Left Column: Raw Data
@@ -109,21 +108,27 @@ if uploaded_files:
                             st.caption(f"Doc Type: {doc_type}")
                             st.text(f"Employee: {employee}")
                             st.text(f"Employer: {employer}")
-                            st.metric("Wages (Box 1)", f"${float(wages):,.2f}" if wages else "$0.00")
+                            st.metric("Wages (Box 1)", f"${wages:,.2f}")
                         
                         # Right Column: Risk Analysis
                         with col2:
                             st.subheader("Compliance Audit")
-                            st.metric("Effective Tax Rate", f"{float(rate):.2f}%")
+                            
+                            # Color code the metric
+                            rate_color = "normal"
+                            if rate > 35 or (rate < 5 and rate > 0):
+                                rate_color = "inverse"
+                                
+                            st.metric("Effective Tax Rate", f"{rate:.2f}%")
                             
                             if flags:
-                                st.error(f"🚩 Risks Detected: {len(flags)}")
-                                # Handle if flags came back as a string (from Sheets) or list
-                                if isinstance(flags, str):
-                                    st.write(flags)
-                                else:
+                                st.error(f"Risks: {len(flags)} Issue(s) Found")
+                                # Handle if flags is a list or a joined string
+                                if isinstance(flags, list):
                                     for flag in flags:
                                         st.write(f"- {flag}")
+                                else:
+                                    st.write(flags)
                             else:
                                 st.success("✅ No Risks Detected")
                                 
